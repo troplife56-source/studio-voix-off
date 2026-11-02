@@ -802,7 +802,13 @@ let elevenVoices = null;
 const PIPER_CONFIG = {
     ortUrl: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js',
     ortWasmPath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/',
-    phonemizerUrl: 'https://cdn.jsdelivr.net/npm/phonemizer@1.2.1/+esm',
+    // espeak-ng : copie locale (fichiers du site) si présente, sinon celle de la démo officielle Piper
+    espeakLocal: 'espeakng.worker.js',
+    espeakRemote: {
+        js: 'https://huggingface.co/spaces/rhasspy/piper-demo/resolve/main/js/espeakng.worker.js',
+        dir: 'https://huggingface.co/spaces/rhasspy/piper-demo/resolve/main/js/',
+        data: 'https://huggingface.co/spaces/rhasspy/piper-demo/resolve/main/espeakng.worker.data',
+    },
     voicesUrl: 'https://huggingface.co/rhasspy/piper-voices/resolve/main/',
     cacheName: 'piper-voices-v1',
 };
@@ -898,6 +904,11 @@ function piperWorker() {
             piperNotify();
             return;
         }
+        if (m.type === 'stage') {
+            piper.stage = m.text || '';
+            piperNotify();
+            return;
+        }
         if (m.type === 'ready') {
             if (!piper.cached.has(m.stem)) {
                 piper.cached.add(m.stem);
@@ -930,6 +941,11 @@ function piperWorker() {
 
 function piperErrorMessage(detail) {
     const d = String(detail || '');
+    if (/^MEMOIRE/.test(d)) {
+        return "Ton navigateur n'a pas assez de mémoire pour charger cette voix (≈ 63 Mo). Ferme les autres onglets et réessaie. "
+            + "Si ça ne suffit pas : ton Chrome est sans doute en version 32 bits (ordinateur ancien). Essaie sur un autre appareil "
+            + "ou avec Firefox 64 bits, ou utilise « Voix du navigateur » en attendant.";
+    }
     if (/téléchargement|fetch|network|NetworkError|Failed to fetch|load|import/i.test(d)) {
         return `La voix n'a pas pu être téléchargée. Vérifie ta connexion internet et réessaie. (${d})`;
     }
@@ -1839,7 +1855,9 @@ function renderPiperStatus() {
     const prog = piper.progress.get(v.stem);
     const state = document.createElement('div');
     state.className = 'piper-state';
-    if (prog) {
+    if (piper.stage && !prog) {
+        state.innerHTML = `<span>⏳ ${escapeHtml(piper.stage)}</span>`;
+    } else if (prog) {
         const pct = prog.total ? Math.min(100, Math.round((prog.loaded / prog.total) * 100)) : 0;
         state.innerHTML = `<span>Téléchargement de la voix ${escapeHtml(v.name)} : <b>${pct} %</b></span>
             <div class="mini-bar"><div style="width:${pct}%"></div></div>`;
@@ -2479,11 +2497,24 @@ document.addEventListener('keydown', e => {
 /* =========================================================
    25. PROGRESSION
    ========================================================= */
+let progressText = '';
 function showProgress(label, done, total) {
     el.progress.hidden = false;
     el.progressBar.style.width = `${total ? Math.round((done / total) * 100) : 0}%`;
-    el.progressLabel.textContent = total ? `${label} ${done}/${total}` : label;
+    progressText = total ? `${label} ${done}/${total}` : label;
+    renderProgressLabel();
 }
+function renderProgressLabel() {
+    if (el.progress.hidden) return;
+    let extra = '';
+    if (engine() === 'libre') {
+        const dl = [...piper.progress.values()][0];
+        if (dl && dl.total) extra = ` · téléchargement de la voix ${Math.round((dl.loaded / dl.total) * 100)} %`;
+        else if (piper.stage) extra = ` · ${piper.stage.replace(/…$/, '')}`;
+    }
+    el.progressLabel.textContent = progressText + extra;
+}
+piper.listeners.add(renderProgressLabel);
 const hideProgress = () => { el.progress.hidden = true; };
 
 async function withBusy(fn) {

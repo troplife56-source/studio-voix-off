@@ -4,14 +4,15 @@
    Fait tourner les voix open-source Piper directement sur l'ordinateur
    du visiteur, sans serveur :
    - onnxruntime-web exécute le modèle de voix (.onnx)
-   - phonemizer (espeak-ng compilé en WebAssembly) transforme le texte en phonèmes
+   - espeak-ng (compilé en WebAssembly, comme la démo officielle de Piper)
+     transforme le texte en phonèmes, dans toutes les langues
    - les modèles viennent de Hugging Face et sont gardés en cache (Cache Storage)
    ========================================================= */
 'use strict';
 
 let CONFIG = null;          // envoyé par la page : URL des bibliothèques et des voix
 const models = new Map();   // stem → { session, config }
-const MAX_MODELS = 2;
+const MAX_MODELS = 1;      // un seul modèle en mémoire à la fois : plus lent à changer, mais tient sur les vieux PC
 
 /* ---------- Chargement des bibliothèques ---------- */
 let ortPromise = null;
@@ -30,16 +31,100 @@ function loadOrt() {
     return ortPromise;
 }
 
-let phonemizePromise = null;
-function loadPhonemizer() {
-    if (!phonemizePromise) {
-        phonemizePromise = import(CONFIG.phonemizerUrl).then((m) => {
-            const fn = m.phonemize || (m.default && m.default.phonemize) || m.default;
-            if (typeof fn !== 'function') throw new Error('phonemizer introuvable');
-            return fn;
-        }).catch((err) => { phonemizePromise = null; throw err; });
+/* ---------- espeak-ng : texte → phonèmes (méthode de la démo officielle Piper) ---------- */
+const AUDIO_OUTPUT_SYNCHRONOUS = 2;
+const espeakCHARS_AUTO = 0;
+const espeakPHONEMES_IPA = 0x02;
+const CLAUSE_TYPE_SENTENCE = 0x00080000;
+const CLAUSE_PERIOD = 40 | 0x00000000 | CLAUSE_TYPE_SENTENCE;
+const CLAUSE_QUESTION = 40 | 0x00002000 | CLAUSE_TYPE_SENTENCE;
+const CLAUSE_EXCLAMATION = 45 | 0x00003000 | CLAUSE_TYPE_SENTENCE;
+const CLAUSE_COMMA = 20 | 0x00001000 | 0x00040000;
+const CLAUSE_COLON = 30 | 0x00000000 | 0x00040000;
+const CLAUSE_SEMICOLON = 30 | 0x00001000 | 0x00040000;
+const PUNCTUATION = {
+    [CLAUSE_PERIOD]: '.', [CLAUSE_QUESTION]: '?', [CLAUSE_EXCLAMATION]: '!',
+    [CLAUSE_COMMA]: ', ', [CLAUSE_COLON]: ': ', [CLAUSE_SEMICOLON]: '; ',
+};
+
+let espeakPromise = null;
+
+// Essaie d'abord les fichiers du site (copie locale), sinon ceux de la démo officielle Piper
+async function importEspeak() {
+    const sources = [];
+    if (CONFIG.espeakLocal) sources.push({ url: new URL(CONFIG.espeakLocal, self.location.href).href, base: null });
+    if (CONFIG.espeakRemote) sources.push({ url: CONFIG.espeakRemote.js, base: CONFIG.espeakRemote });
+    let lastErr = null;
+    for (const src of sources) {
+        try {
+            const mod = await import(src.url);
+            return { factory: mod.default || mod, base: src.base, url: src.url };
+        } catch (err) { lastErr = err; }
     }
-    return phonemizePromise;
+    throw lastErr || new Error('espeak-ng introuvable');
+}
+
+function loadEspeak() {
+    if (!espeakPromise) {
+        espeakPromise = (async () => {
+            const { factory, base, url } = await importEspeak();
+            const options = {
+                locateFile(path) {
+                    if (base) return /\.data$/.test(path) ? base.data : base.dir + path;
+                    return new URL(path, url).href;
+                },
+            };
+            if (base) options.locateFile = (path) => (/\.data$/.test(path) ? base.data : base.dir + path);
+            const E = await factory(options);
+            E._espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, 0, 0);
+            return E;
+        })().catch((err) => { espeakPromise = null; throw err; });
+    }
+    return espeakPromise;
+}
+
+function allocString(E, str) {
+    const size = E.lengthBytesUTF8(str) + 1;
+    const ptr = E._malloc(size);
+    E.stringToUTF8(str, ptr, size);
+    return ptr;
+}
+
+// Renvoie une liste de phrases en phonèmes IPA (avec la ponctuation, comme Piper)
+function espeakPhonemize(E, text, voice) {
+    const voicePtr = allocString(E, voice);
+    const ok = E._espeak_SetVoiceByName(voicePtr);
+    E._free(voicePtr);
+    if (ok !== 0 && ok !== undefined) throw new Error(`voix espeak inconnue : ${voice}`);
+
+    const textPtr = allocString(E, text);
+    const textPtrPtr = E._malloc(4);
+    E.setValue(textPtrPtr, textPtr, '*');
+    const terminatorPtr = E._malloc(4);
+    const sentences = [];
+    let current = '';
+    try {
+        for (let guard = 0; guard < 10000; guard++) {
+            const phonemesPtr = E._espeak_TextToPhonemesWithTerminator(textPtrPtr, espeakCHARS_AUTO, espeakPHONEMES_IPA, terminatorPtr);
+            current += E.UTF8ToString(phonemesPtr);
+            const terminator = E.getValue(terminatorPtr, 'i32');
+            const punct = PUNCTUATION[terminator & 0x000fffff];
+            if (punct) current += punct;
+            if ((terminator & CLAUSE_TYPE_SENTENCE) === CLAUSE_TYPE_SENTENCE) {
+                if (current.trim()) sentences.push(current.trim());
+                current = '';
+            }
+            const next = E.getValue(textPtrPtr, '*');
+            if (!next) break;
+            E.setValue(textPtrPtr, next, '*');
+        }
+    } finally {
+        E._free(textPtr);
+        E._free(textPtrPtr);
+        E._free(terminatorPtr);
+    }
+    if (current.trim()) sentences.push(current.trim());
+    return sentences;
 }
 
 /* ---------- Téléchargement avec cache ---------- */
@@ -53,30 +138,32 @@ async function fetchCached(url, onProgress) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`téléchargement impossible (${res.status})`);
     const total = parseInt(res.headers.get('Content-Length') || '0', 10);
-    let buffer;
-    if (res.body && res.body.getReader && onProgress) {
-        const reader = res.body.getReader();
-        const chunks = [];
-        let loaded = 0, last = 0;
-        for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            loaded += value.length;
-            if (loaded - last > 512 * 1024) { last = loaded; onProgress(loaded, total); }
+    if (!(res.body && res.body.getReader && onProgress)) {
+        const buffer = await res.arrayBuffer();
+        if (cache) {
+            try { await cache.put(url, new Response(new Blob([buffer]))); } catch { /* espace insuffisant */ }
         }
-        onProgress(loaded, total || loaded);
-        buffer = new Uint8Array(loaded);
-        let o = 0;
-        for (const c of chunks) { buffer.set(c, o); o += c.length; }
-        buffer = buffer.buffer;
-    } else {
-        buffer = await res.arrayBuffer();
+        return buffer;
     }
+    // Téléchargement par morceaux, puis un seul bloc en mémoire (économe pour les vieux ordinateurs)
+    const reader = res.body.getReader();
+    let chunks = [];
+    let loaded = 0, last = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        if (loaded - last > 512 * 1024) { last = loaded; onProgress(loaded, total); }
+    }
+    onProgress(loaded, total || loaded);
+    let blob = new Blob(chunks);
+    chunks = null;
     if (cache) {
-        try { await cache.put(url, new Response(buffer.slice(0), { headers: { 'Content-Type': 'application/octet-stream' } })); }
-        catch { /* espace insuffisant : on continue sans cache */ }
+        try { await cache.put(url, new Response(blob)); } catch { /* espace insuffisant : on continue sans cache */ }
     }
+    const buffer = await blob.arrayBuffer();
+    blob = null;
     return buffer;
 }
 
@@ -84,6 +171,23 @@ function modelUrl(stem, ext) {
     const [code, name, quality] = stem.split('-');
     return `${CONFIG.voicesUrl}${code.split('_')[0]}/${code}/${name}/${quality}/${stem}${ext}`;
 }
+
+function releaseModel(stem) {
+    const m = models.get(stem);
+    models.delete(stem);
+    try { if (m && m.session.release) m.session.release(); } catch { /* ignoré */ }
+}
+
+// Réglages économes en mémoire (indispensables sur les ordinateurs anciens / navigateurs 32 bits)
+const SESSION_OPTIONS = {
+    executionProviders: ['wasm'],
+    graphOptimizationLevel: 'basic',
+    enableCpuMemArena: false,
+    enableMemPattern: false,
+    executionMode: 'sequential',
+};
+
+const isMemoryError = (err) => /alloc|memory|mémoire|buffer|out of|OOM|RangeError/i.test(String(err && (err.message || err)));
 
 async function loadModel(stem) {
     if (models.has(stem)) {
@@ -93,21 +197,37 @@ async function loadModel(stem) {
         return m;
     }
     const progress = (loaded, total) => postMessage({ type: 'progress', stem, loaded, total });
+    stage('Préparation du moteur de voix…');
     const [ort, configBuf] = await Promise.all([loadOrt(), fetchCached(modelUrl(stem, '.onnx.json'))]);
     const config = JSON.parse(new TextDecoder().decode(configBuf));
-    const onnx = await fetchCached(modelUrl(stem, '.onnx'), progress);
-    const session = await ort.InferenceSession.create(onnx, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+    let onnx = new Uint8Array(await fetchCached(modelUrl(stem, '.onnx'), progress));
+
+    // Libère d'abord la place si un autre modèle occupe déjà la mémoire
+    while (models.size >= MAX_MODELS) releaseModel(models.keys().next().value);
+    stage('Chargement de la voix en mémoire…');
+    let session;
+    try {
+        session = await ort.InferenceSession.create(onnx, SESSION_OPTIONS);
+    } catch (err) {
+        if (!isMemoryError(err)) throw err;
+        // Deuxième essai : on vide tout et on retente une fois
+        [...models.keys()].forEach(releaseModel);
+        await new Promise((r) => setTimeout(r, 300));
+        try {
+            session = await ort.InferenceSession.create(onnx, SESSION_OPTIONS);
+        } catch (err2) {
+            throw new Error(`MEMOIRE: ${err2 && err2.message ? err2.message : err2}`);
+        }
+    }
+    onnx = null;
     const m = { session, config };
     models.set(stem, m);
-    while (models.size > MAX_MODELS) {
-        const oldest = models.keys().next().value;
-        const old = models.get(oldest);
-        models.delete(oldest);
-        try { old.session.release && old.session.release(); } catch { /* ignoré */ }
-    }
     postMessage({ type: 'ready', stem });
+    stage('');
     return m;
 }
+
+function stage(text) { postMessage({ type: 'stage', text }); }
 
 /* ---------- Phonèmes → identifiants (comme piper-phonemize) ---------- */
 function phonemesToIds(phonemes, idMap) {
@@ -133,12 +253,11 @@ function speakerId(config, speaker) {
 }
 
 async function synthesize({ stem, speaker, text, rate }) {
-    const [{ session, config }, phonemize] = await Promise.all([loadModel(stem), loadPhonemizer()]);
+    const [{ session, config }, espeak] = await Promise.all([loadModel(stem), loadEspeak()]);
+    stage('Fabrication de la voix…');
     const ort = await loadOrt();
     const voice = (config.espeak && config.espeak.voice) || stem.split('_')[0];
-    let sentences = await phonemize(text, voice);
-    if (!Array.isArray(sentences)) sentences = [String(sentences || '')];
-    sentences = sentences.map((s) => String(s).trim()).filter(Boolean);
+    const sentences = espeakPhonemize(espeak, text, voice);
     if (!sentences.length) throw new Error('aucun son à produire pour ce texte');
 
     const inf = config.inference || {};
@@ -199,16 +318,19 @@ self.onmessage = async (e) => {
     try {
         if (msg.type === 'synth') {
             const wav = await synthesize(msg);
+            stage('');
             postMessage({ id: msg.id, ok: true, wav }, [wav]);
         } else if (msg.type === 'load') {
             await loadModel(msg.stem);
             postMessage({ id: msg.id, ok: true });
         } else if (msg.type === 'warmup') {
-            await Promise.all([loadOrt(), loadPhonemizer()]);
+            await Promise.all([loadOrt(), loadEspeak()]);
             postMessage({ id: msg.id, ok: true });
         }
     } catch (err) {
-        postMessage({ id: msg.id, ok: false, error: (err && err.message) || String(err), stem: msg.stem });
+        stage('');
+        const text = (err && err.message) || String(err);
+        postMessage({ id: msg.id, ok: false, error: isMemoryError(err) && !/^MEMOIRE/.test(text) ? `MEMOIRE: ${text}` : text, stem: msg.stem });
     }
 };
 
