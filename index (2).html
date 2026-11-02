@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Studio Voix Off — voix off gratuite en français</title>
+    <meta name="description" content="Transforme ton texte en voix off naturelle, gratuitement et sans inscription : voix françaises, sous-titres, musique de fond et vidéo. Tout se passe dans ton navigateur.">
+    <meta property="og:title" content="Studio Voix Off">
+    <meta property="og:description" content="Du texte à la voix off, gratuit et sans inscription : voix naturelles, sous-titres, musique, vidéo.">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%236d4aff'/><path d='M12 5a2.5 2.5 0 0 0-2.5 2.5v5a2.5 2.5 0 0 0 5 0v-5A2.5 2.5 0 0 0 12 5Zm5 6.5v1a5 5 0 0 1-10 0v-1M12 17.5V20' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round'/></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-engine="browser">
+
+<div class="app">
+
+    <!-- ===================== En-tête ===================== -->
+    <header class="topbar">
+        <div class="brand">
+            <div class="logo" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+            </div>
+            <div>
+                <h1>Studio Voix Off</h1>
+                <p class="subtitle">Du texte à la voix, prêt à monter</p>
+            </div>
+        </div>
+
+        <div class="project-bar">
+            <select id="project-select" aria-label="Projet"></select>
+            <button id="project-new" class="icon-btn" title="Nouveau projet" aria-label="Nouveau projet">＋</button>
+            <button id="project-rename" class="icon-btn" title="Renommer le projet" aria-label="Renommer">✎</button>
+            <button id="project-delete" class="icon-btn" title="Supprimer le projet" aria-label="Supprimer">🗑</button>
+        </div>
+
+        <nav class="tools">
+            <button id="open-dict" class="tool-btn" title="Dictionnaire de prononciation">📖 <span>Dictionnaire</span></button>
+            <button id="open-compare" class="tool-btn" title="Comparer des voix">⚖ <span>Comparer</span></button>
+            <button id="open-prompter" class="tool-btn" title="Prompteur">🎬 <span>Prompteur</span></button>
+            <button id="theme-btn" class="icon-btn" title="Changer de thème" aria-label="Changer de thème">◐</button>
+        </nav>
+    </header>
+
+    <main class="layout">
+
+        <!-- ===================== Colonne gauche ===================== -->
+        <div class="col">
+
+            <!-- 1. Texte -->
+            <section class="panel">
+                <div class="panel-head">
+                    <h2><span class="step">1</span> Ton texte</h2>
+                    <label class="link-btn" for="file-input">Importer un .txt</label>
+                    <input type="file" id="file-input" accept=".txt,text/plain" hidden>
+                </div>
+
+                <div class="chips" id="tag-bar">
+                    <button class="chip" data-insert="[pause 1s]" title="Insère un silence">⏸ Pause</button>
+                    <button class="chip" data-insert="[voix: ]" title="Change de voix à partir d'ici">🗣 Voix</button>
+                    <button class="chip" data-insert="[lent]" title="Ralentit à partir d'ici">🐢 Lent</button>
+                    <button class="chip" data-insert="[rapide]" title="Accélère à partir d'ici">🐇 Rapide</button>
+                    <button class="chip" data-insert="[normal]" title="Revient à la vitesse normale">↺ Normal</button>
+                    <button class="chip openai-only" data-insert="[ton: chuchoté]" title="Change le ton (OpenAI)">🎭 Ton</button>
+                    <button class="chip" id="help-tags" title="Aide sur les balises">?</button>
+                </div>
+
+                <textarea id="text-input" spellcheck="true" placeholder="Colle ou écris ton texte ici.
+
+Astuces :
+• [pause 2s] insère un silence
+• [voix: Nom] change de voix
+• En mode dialogue : MARC : Bonjour ! / SARA : Salut !"></textarea>
+
+                <div class="row-between">
+                    <label class="switch">
+                        <input type="checkbox" id="dialogue-toggle">
+                        <span class="slider-sw"></span>
+                        <span>Mode dialogue <span class="muted">(NOM : réplique)</span></span>
+                    </label>
+                    <button id="preview-btn" class="link-btn as-btn" type="button">Aperçu de lecture</button>
+                </div>
+
+                <div id="cast" class="cast" hidden>
+                    <div class="cast-title">Personnages détectés</div>
+                    <div id="cast-list" class="cast-list"></div>
+                </div>
+
+                <div class="stats">
+                    <span><b id="stat-chars">0</b> caractères</span>
+                    <span><b id="stat-words">0</b> mots</span>
+                    <span>≈ <b id="stat-duration">0 s</b></span>
+                    <span class="cost" id="stat-cost"></span>
+                </div>
+            </section>
+
+            <!-- 2. Voix -->
+            <section class="panel">
+                <div class="panel-head">
+                    <h2><span class="step">2</span> La voix</h2>
+                </div>
+
+                <div class="field">
+                    <label for="engine-select">Moteur de voix</label>
+                    <select id="engine-select">
+                        <option value="libre" id="engine-libre-option">Voix gratuites Piper — dans ton navigateur (recommandé)</option>
+                        <option value="browser">Voix du navigateur — écoute seulement</option>
+                        <option value="elevenlabs">ElevenLabs — payant, ta propre clé</option>
+                        <option value="openai">OpenAI — payant, ta propre clé (fin le 6 janvier 2027)</option>
+                    </select>
+                    <div class="engine-status libre-only" id="libre-status"></div>
+                    <p class="hint openai-only warn-text">OpenAI arrête ce service le 6 janvier 2027. Préfère ElevenLabs pour tes projets durables.</p>
+                </div>
+
+                <div class="field online-only key-field">
+                    <label for="api-key">Clé API <span id="key-provider" class="muted"></span></label>
+                    <div class="key-row">
+                        <input type="password" id="api-key" placeholder="Colle ta clé ici" autocomplete="off" spellcheck="false">
+                        <button id="key-toggle" class="ghost small" type="button">Voir</button>
+                        <button id="key-forget" class="ghost small" type="button">Oublier</button>
+                    </div>
+                    <p class="hint">La clé reste dans ce navigateur, sur ton appareil.</p>
+                </div>
+
+                <div class="field elevenlabs-only">
+                    <label for="model-select">Modèle</label>
+                    <select id="model-select">
+                        <option value="eleven_multilingual_v2">Multilingual v2 — fiable, très bon en français</option>
+                        <option value="eleven_v4">Eleven v4 — le plus expressif</option>
+                        <option value="eleven_flash_v2_5">Flash v2.5 — rapide, moitié prix</option>
+                    </select>
+                </div>
+
+                <div class="field libre-only">
+                    <label for="lang-select">Langue et accents</label>
+                    <select id="lang-select"></select>
+                </div>
+
+                <div class="field">
+                    <label for="voice-select">Voix principale</label>
+                    <div class="key-row">
+                        <select id="voice-select"></select>
+                        <button id="voice-preview" class="ghost small" type="button" title="Écouter un exemple">▶ Test</button>
+                    </div>
+                </div>
+
+                <div class="field openai-only">
+                    <label for="instructions">Ton de la voix <span class="muted">(facultatif)</span></label>
+                    <input type="text" id="instructions" placeholder="Ex. : voix posée de documentaire, chaleureuse">
+                </div>
+
+                <div class="sliders">
+                    <div class="field">
+                        <label for="rate-slider">Vitesse <span class="value" id="rate-value">1.0×</span></label>
+                        <input type="range" id="rate-slider" min="0.5" max="2" step="0.05" value="1">
+                    </div>
+                    <div class="field pitch-field" title="Voix du navigateur">
+                        <label for="pitch-slider">Tonalité <span class="value" id="pitch-value">1.0</span></label>
+                        <input type="range" id="pitch-slider" min="0.5" max="1.5" step="0.1" value="1">
+                    </div>
+                    <div class="field elevenlabs-only">
+                        <label for="stability-slider">Stabilité <span class="value" id="stability-value">50 %</span></label>
+                        <input type="range" id="stability-slider" min="0" max="1" step="0.05" value="0.5">
+                    </div>
+                    <div class="field">
+                        <label for="volume-slider">Volume d'écoute <span class="value" id="volume-value">100 %</span></label>
+                        <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1">
+                    </div>
+                    <div class="field">
+                        <label for="gap-slider">Silence entre blocs <span class="value" id="gap-value">0.3 s</span></label>
+                        <input type="range" id="gap-slider" min="0" max="2" step="0.1" value="0.3">
+                    </div>
+                    <div class="field">
+                        <label for="block-size">Taille max d'un bloc <span class="value" id="block-size-value">180</span></label>
+                        <input type="range" id="block-size" min="80" max="600" step="20" value="180">
+                    </div>
+                </div>
+
+                <label class="switch">
+                    <input type="checkbox" id="normalize-toggle" checked>
+                    <span class="slider-sw"></span>
+                    <span>Nettoyage automatique <span class="muted">(nombres, dates, abréviations…)</span></span>
+                </label>
+            </section>
+
+            <!-- Durée cible -->
+            <section class="panel">
+                <div class="panel-head">
+                    <h2><span class="step">⏱</span> Durée cible</h2>
+                    <span class="muted small-text">pour caler la voix sur ta vidéo</span>
+                </div>
+                <div class="target-row">
+                    <input type="text" id="target-input" inputmode="numeric" placeholder="ex. 30 ou 1:30" aria-label="Durée cible">
+                    <button id="target-adjust" class="ghost" type="button" disabled>Ajuster la vitesse</button>
+                </div>
+                <div class="target-bar" id="target-bar" hidden>
+                    <div class="target-fill" id="target-fill"></div>
+                    <div class="target-mark"></div>
+                </div>
+                <p class="target-msg" id="target-msg">Indique la durée de ta vidéo : l'application te dit si ton texte rentre dedans.</p>
+            </section>
+        </div>
+
+        <!-- ===================== Colonne droite ===================== -->
+        <div class="col">
+
+            <!-- 3. Blocs -->
+            <section class="panel">
+                <div class="panel-head">
+                    <h2><span class="step">3</span> Les blocs <span class="badge" id="block-count">0</span></h2>
+                    <button id="split-btn" class="link-btn as-btn" type="button" title="Redécoupe le texte (annule les modifications faites dans les blocs)">Redécouper</button>
+                </div>
+
+                <p class="notice" id="edited-notice" hidden>
+                    Tu as modifié des blocs à la main : ils ne suivent plus le texte. Clique sur <b>Redécouper</b> pour repartir du texte.
+                </p>
+
+                <div class="toolbar">
+                    <button id="play-all-btn" class="success" disabled>▶ Tout lire</button>
+                    <button id="pause-btn" class="ghost" disabled>⏸ Pause</button>
+                    <button id="stop-btn" class="danger">■ Stop</button>
+                </div>
+
+                <div class="progress" id="progress" hidden>
+                    <div class="progress-bar" id="progress-bar"></div>
+                    <span class="progress-label" id="progress-label"></span>
+                </div>
+
+                <div id="blocks-container" class="blocks"></div>
+            </section>
+
+            <!-- 4. Export -->
+            <section class="panel">
+                <div class="panel-head">
+                    <h2><span class="step">4</span> Export</h2>
+                </div>
+
+                <p class="hint browser-only">Pour exporter l'audio et la vidéo, choisis « Voix gratuites Piper » dans « La voix ». Les sous-titres et le prompteur marchent avec tous les moteurs.</p>
+
+                <div class="music online-only">
+                    <div class="music-head">
+                        <span class="music-title">🎵 Musique de fond</span>
+                        <label class="link-btn" for="music-input" id="music-add">Ajouter une musique</label>
+                        <input type="file" id="music-input" accept="audio/*" hidden>
+                    </div>
+                    <div id="music-box" hidden>
+                        <div class="music-file">
+                            <span id="music-name"></span>
+                            <button id="music-remove" class="ghost small" type="button">Retirer</button>
+                        </div>
+                        <div class="sliders">
+                            <div class="field">
+                                <label for="music-volume">Volume musique <span class="value" id="music-volume-value">35 %</span></label>
+                                <input type="range" id="music-volume" min="0" max="1" step="0.05" value="0.35">
+                            </div>
+                            <div class="field">
+                                <label for="music-duck">Baisse sous la voix <span class="value" id="music-duck-value">75 %</span></label>
+                                <input type="range" id="music-duck" min="0" max="0.95" step="0.05" value="0.75">
+                            </div>
+                        </div>
+                        <p class="hint">La musique baisse quand la voix parle, remonte dans les silences, et s'efface en douceur à la fin.</p>
+                    </div>
+                </div>
+
+                <div class="export-grid">
+                    <button id="generate-all-btn" class="ghost online-only" disabled>Générer tous les blocs</button>
+                    <button id="listen-final-btn" class="ghost online-only" disabled>▶ Écouter le résultat final</button>
+                    <div class="export-audio online-only">
+                        <select id="format-select" aria-label="Format audio">
+                            <option value="mp3">MP3</option>
+                            <option value="wav">WAV (qualité max)</option>
+                        </select>
+                        <button id="export-audio-btn" class="primary" disabled>⬇ Exporter l'audio</button>
+                    </div>
+                    <button id="export-srt-btn" class="ghost" disabled>⬇ Sous-titres (.srt)</button>
+                    <button id="open-video" class="ghost online-only" disabled>🎬 Vidéo audiogramme</button>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="foot">
+        <span>Raccourcis : <kbd>Ctrl</kbd>+<kbd>Entrée</kbd> tout lire · <kbd>Échap</kbd> stop</span>
+        <span id="storage-info"></span>
+        <span id="piper-storage"></span>
+        <span class="foot-links">
+            <button id="open-about" class="link-btn as-btn" type="button">À propos et confidentialité</button>
+            · <button id="open-consent" class="link-btn as-btn" type="button">Cookies</button>
+        </span>
+    </footer>
+</div>
+
+<!-- ===================== Fenêtre : Dictionnaire ===================== -->
+<dialog id="dlg-dict" class="dlg">
+    <div class="dlg-head">
+        <h3>📖 Dictionnaire de prononciation</h3>
+        <button class="icon-btn dlg-close" aria-label="Fermer">✕</button>
+    </div>
+    <p class="hint">Dis comment lire un mot : il sera remplacé à chaque lecture, sans changer ton texte. Exemple : « Oujda » → « Ouj-da », « IA » → « i-a ».</p>
+    <form id="dict-form" class="dict-add">
+        <input type="text" id="dict-from" placeholder="Mot écrit" required>
+        <span class="arrow">→</span>
+        <input type="text" id="dict-to" placeholder="Comment le dire" required>
+        <button class="primary small" type="submit">Ajouter</button>
+    </form>
+    <div id="dict-list" class="dict-list"></div>
+</dialog>
+
+<!-- ===================== Fenêtre : Comparateur ===================== -->
+<dialog id="dlg-compare" class="dlg dlg-wide">
+    <div class="dlg-head">
+        <h3>⚖ Comparer des voix</h3>
+        <button class="icon-btn dlg-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="field">
+        <label for="compare-text">Phrase de test</label>
+        <textarea id="compare-text" rows="2"></textarea>
+    </div>
+    <div class="compare-grid" id="compare-grid"></div>
+    <button id="compare-run" class="primary">Générer et comparer</button>
+    <p class="hint online-only">Chaque voix génère la phrase une fois. Les résultats restent en mémoire.</p>
+</dialog>
+
+<!-- ===================== Fenêtre : Aperçu de lecture ===================== -->
+<dialog id="dlg-preview" class="dlg dlg-wide">
+    <div class="dlg-head">
+        <h3>Aperçu de lecture</h3>
+        <button class="icon-btn dlg-close" aria-label="Fermer">✕</button>
+    </div>
+    <p class="hint">Voici exactement ce que la voix va prononcer, après le dictionnaire et le nettoyage.</p>
+    <div id="preview-list" class="preview-list"></div>
+</dialog>
+
+<!-- ===================== Fenêtre : Aide balises ===================== -->
+<dialog id="dlg-help" class="dlg">
+    <div class="dlg-head">
+        <h3>Les balises de mise en scène</h3>
+        <button class="icon-btn dlg-close" aria-label="Fermer">✕</button>
+    </div>
+    <table class="help-table">
+        <tr><td><code>[pause]</code></td><td>Silence d'1 seconde</td></tr>
+        <tr><td><code>[pause 2s]</code> <code>[pause 500ms]</code></td><td>Silence de la durée choisie</td></tr>
+        <tr><td><code>[voix: Rachel]</code></td><td>Change de voix à partir d'ici (nom ou partie du nom)</td></tr>
+        <tr><td><code>[voix]</code></td><td>Revient à la voix principale</td></tr>
+        <tr><td><code>[lent]</code> <code>[rapide]</code> <code>[normal]</code></td><td>Change le rythme à partir d'ici</td></tr>
+        <tr><td><code>[vitesse 1.3]</code></td><td>Vitesse précise (multiplie la vitesse réglée)</td></tr>
+        <tr><td><code>[ton: joyeux]</code></td><td>Change le ton (OpenAI). <code>[ton]</code> pour revenir</td></tr>
+    </table>
+    <p class="hint">Avec ElevenLabs v4, les autres balises entre crochets (par ex. <code>[whispers]</code>, <code>[laughs]</code>) sont transmises telles quelles au modèle. Avec les autres moteurs, elles sont ignorées.</p>
+    <p class="hint"><b>Mode dialogue :</b> écris une réplique par ligne sous la forme <code>NOM : texte</code>. Chaque personnage reçoit sa voix, réglable dans « Personnages détectés ».</p>
+</dialog>
+
+<!-- ===================== Fenêtre : Vidéo ===================== -->
+<dialog id="dlg-video" class="dlg dlg-wide">
+    <div class="dlg-head">
+        <h3>🎬 Vidéo audiogramme</h3>
+        <button class="icon-btn dlg-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="video-layout">
+        <div class="video-options">
+            <div class="field">
+                <label for="video-format">Format</label>
+                <select id="video-format">
+                    <option value="720x1280">Vertical 9:16 (TikTok, Reels, Shorts)</option>
+                    <option value="720x720">Carré 1:1 (Instagram)</option>
+                    <option value="1280x720">Horizontal 16:9 (YouTube)</option>
+                </select>
+            </div>
+            <div class="field">
+                <label for="video-title">Titre affiché</label>
+                <input type="text" id="video-title" maxlength="60">
+            </div>
+            <div class="field">
+                <label for="video-style">Style</label>
+                <select id="video-style">
+                    <option value="violet">Violet néon</option>
+                    <option value="nuit">Nuit bleue</option>
+                    <option value="sable">Sable clair</option>
+                    <option value="noir">Noir & blanc</option>
+                </select>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="video-subs" checked>
+                <span class="slider-sw"></span>
+                <span>Sous-titres incrustés</span>
+            </label>
+            <button id="video-run" class="primary">Créer la vidéo</button>
+            <p class="hint">La vidéo s'enregistre en temps réel : garde cet onglet ouvert et au premier plan pendant l'enregistrement.</p>
+            <a id="video-download" class="primary btn-link" hidden>⬇ Télécharger la vidéo</a>
+        </div>
+        <div class="video-preview">
+            <canvas id="video-canvas" width="720" height="1280"></canvas>
+            <video id="video-result" controls playsinline hidden></video>
+        </div>
+    </div>
+</dialog>
+
+<!-- ===================== Prompteur ===================== -->
+<div id="prompter" class="prompter" hidden>
+    <div class="prompter-bar">
+        <button id="pr-voice" class="success small">▶ Lire avec la voix</button>
+        <button id="pr-scroll" class="ghost small">⇣ Défilement seul</button>
+        <button id="pr-pause" class="ghost small">⏸</button>
+        <label class="pr-speed">Défilement <input type="range" id="pr-speed" min="10" max="200" step="5" value="60"></label>
+        <button id="pr-smaller" class="ghost small" title="Texte plus petit">A−</button>
+        <button id="pr-bigger" class="ghost small" title="Texte plus grand">A+</button>
+        <button id="pr-mirror" class="ghost small" title="Miroir (pour un vrai prompteur)">⇋ Miroir</button>
+        <button id="pr-close" class="danger small">✕ Fermer</button>
+    </div>
+    <div class="prompter-body" id="prompter-body">
+        <div class="prompter-text" id="prompter-text"></div>
+    </div>
+</div>
+
+<!-- Consentement mesure d'audience -->
+<div id="consent" class="consent" role="dialog" aria-live="polite" aria-label="Mesure d'audience" hidden>
+    <p><b>Statistiques de visite</b> — Avec ton accord, Studio Voix Off utilise Google Analytics pour compter les visites et savoir quelles fonctions servent le plus. Ton texte n'est jamais envoyé.</p>
+    <div class="consent-actions">
+        <button id="consent-no" class="ghost small" type="button">Refuser</button>
+        <button id="consent-yes" class="primary small" type="button">Accepter</button>
+    </div>
+</div>
+
+<!-- À propos / confidentialité -->
+<dialog id="dlg-about" class="dlg">
+    <div class="dlg-head">
+        <h3>À propos et confidentialité</h3>
+        <button class="icon-btn dlg-close" aria-label="Fermer">✕</button>
+    </div>
+    <p>Studio Voix Off transforme un texte en voix off, gratuitement et sans inscription.</p>
+    <ul class="about-list">
+        <li><b>Tout se passe dans ton navigateur.</b> Ton texte et tes projets restent sur ton appareil : ils ne sont envoyés à aucun serveur.</li>
+        <li><b>Voix Piper :</b> modèles open-source téléchargés une fois depuis Hugging Face, puis gardés sur ton appareil. Chaque voix a sa licence (lien « fiche de la voix ») : vérifie-la avant un usage commercial.</li>
+        <li><b>ElevenLabs / OpenAI</b> (facultatif) : ta clé reste dans ton navigateur et le texte est envoyé directement à ces services.</li>
+        <li><b>Statistiques :</b> Google Analytics, seulement si tu l'acceptes. Tu peux changer d'avis avec le lien « Cookies » en bas de page.</li>
+        <li><b>Musique de fond :</b> utilise uniquement des morceaux dont tu as les droits.</li>
+    </ul>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="script.js"></script>
+</body>
+</html>
